@@ -46,8 +46,12 @@ internal class MetadataManager(
                 field = try {
                     getMetadataFromCache() ?: throw IOException()
                 } catch (e: IOException) {
-                    // If this happens, it is hard to recover from this. Let's hope it never does.
-                    throw AssertionError("Error reading metadata from cache", e)
+                    // This can happen if the storage location ran out of space
+                    // or the app process got killed while writing the file.
+                    // It is hard to recover from this, so we try as best as we can here:
+                    Log.e(TAG, "ERROR getting metadata cache, creating new file ", e)
+                    // This should cause requiresInit() return true
+                    uninitializedMetadata.copy(version = (-1).toByte())
                 }
                 mLastBackupTime.postValue(field.time)
             }
@@ -248,6 +252,11 @@ internal class MetadataManager(
                     packageMetadata.state == NO_DATA // or apps that simply had no data
                 )
         }.count()
+    }
+
+    @Synchronized
+    fun getPackagesBackupSize(): Long {
+        return metadata.packageMetadataMap.values.sumOf { it.size ?: 0L }
     }
 
     @Synchronized
