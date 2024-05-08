@@ -12,6 +12,7 @@ import android.os.RemoteException
 import android.util.Log
 import androidx.annotation.WorkerThread
 import com.stevesoltys.seedvault.BackupMonitor
+import com.stevesoltys.seedvault.transport.TRANSPORT_ID
 import com.stevesoltys.seedvault.transport.backup.PackageService
 import com.stevesoltys.seedvault.ui.notification.BackupNotificationManager
 import com.stevesoltys.seedvault.ui.notification.NotificationBackupObserver
@@ -35,7 +36,8 @@ internal class BackupRequester(
     val packageService: PackageService,
 ) : KoinComponent {
 
-    val isBackupEnabled: Boolean get() = backupManager.isBackupEnabled
+    val isBackupEnabled: Boolean get() =
+        (backupManager.isBackupEnabled && backupManager.currentTransport == TRANSPORT_ID)
 
     private val packages = packageService.eligiblePackages
     private val observer = NotificationBackupObserver(
