@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2020 The Calyx Institute
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 package com.stevesoltys.seedvault.transport.backup
 
 import android.app.backup.BackupTransport.FLAG_USER_INITIATED
@@ -11,9 +16,11 @@ import android.util.Log
 import com.stevesoltys.seedvault.crypto.Crypto
 import com.stevesoltys.seedvault.header.VERSION
 import com.stevesoltys.seedvault.header.getADForFull
-import com.stevesoltys.seedvault.plugins.StoragePlugin
+import com.stevesoltys.seedvault.plugins.StoragePluginManager
+import com.stevesoltys.seedvault.plugins.isOutOfSpace
 import com.stevesoltys.seedvault.settings.SettingsManager
-import libcore.io.IoUtils.closeQuietly
+import com.stevesoltys.seedvault.ui.notification.BackupNotificationManager
+import java.io.Closeable
 import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
@@ -39,12 +46,14 @@ private val TAG = FullBackup::class.java.simpleName
 
 @Suppress("BlockingMethodInNonBlockingContext")
 internal class FullBackup(
-    private val plugin: StoragePlugin,
+    private val pluginManager: StoragePluginManager,
     private val settingsManager: SettingsManager,
+    private val nm: BackupNotificationManager,
     private val inputFactory: InputFactory,
     private val crypto: Crypto,
 ) {
 
+    private val plugin get() = pluginManager.appPlugin
     private var state: FullBackupState? = null
 
     fun hasState() = state != null
@@ -169,6 +178,7 @@ internal class FullBackup(
             TRANSPORT_OK
         } catch (e: IOException) {
             Log.e(TAG, "Error handling backup data for ${state.packageName}: ", e)
+            if (e.isOutOfSpace()) nm.onInsufficientSpaceError()
             TRANSPORT_ERROR
         }
     }
@@ -200,9 +210,9 @@ internal class FullBackup(
         val state = this.state ?: throw AssertionError("Trying to clear empty state.")
         return try {
             state.outputStream?.flush()
-            closeQuietly(state.outputStream)
-            closeQuietly(state.inputStream)
-            closeQuietly(state.inputFileDescriptor)
+            closeLogging(state.outputStream)
+            closeLogging(state.inputStream)
+            closeLogging(state.inputFileDescriptor)
             TRANSPORT_OK
         } catch (e: IOException) {
             Log.w(TAG, "Error when clearing state", e)
@@ -210,6 +220,12 @@ internal class FullBackup(
         } finally {
             this.state = null
         }
+    }
+
+    private fun closeLogging(closable: Closeable?) = try {
+        closable?.close()
+    } catch (e: Exception) {
+        Log.w(TAG, "Error closing: ", e)
     }
 
 }

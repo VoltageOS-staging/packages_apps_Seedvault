@@ -12,6 +12,8 @@ import com.stevesoltys.seedvault.metadata.MetadataManager
 import com.stevesoltys.seedvault.metadata.PackageState.NOT_ALLOWED
 import com.stevesoltys.seedvault.metadata.PackageState.WAS_STOPPED
 import com.stevesoltys.seedvault.plugins.StoragePlugin
+import com.stevesoltys.seedvault.plugins.StoragePluginManager
+import com.stevesoltys.seedvault.plugins.isOutOfSpace
 import com.stevesoltys.seedvault.plugins.saf.FILE_BACKUP_METADATA
 import com.stevesoltys.seedvault.settings.SettingsManager
 import com.stevesoltys.seedvault.transport.backup.PackageService
@@ -27,8 +29,9 @@ internal class ApkBackupManager(
     private val settingsManager: SettingsManager,
     private val metadataManager: MetadataManager,
     private val packageService: PackageService,
+    private val iconManager: IconManager,
     private val apkBackup: ApkBackup,
-    private val plugin: StoragePlugin,
+    private val pluginManager: StoragePluginManager,
     private val nm: BackupNotificationManager,
 ) {
 
@@ -42,6 +45,8 @@ internal class ApkBackupManager(
             // Since an APK backup does not change the [packageState], we first record it for all
             // packages that don't get backed up.
             recordNotBackedUpPackages()
+            // Upload current icons, so we can show them to user before restore
+            uploadIcons()
             // Now, if APK backups are enabled by the user, we back those up.
             if (settingsManager.backupApks()) {
                 backUpApks()
@@ -50,7 +55,7 @@ internal class ApkBackupManager(
             keepTrying {
                 // upload all local changes only at the end,
                 // so we don't have to re-upload the metadata
-                plugin.getMetadataOutputStream().use { outputStream ->
+                pluginManager.appPlugin.getMetadataOutputStream().use { outputStream ->
                     metadataManager.uploadMetadata(outputStream)
                 }
             }
@@ -75,6 +80,7 @@ internal class ApkBackupManager(
         nm.onAppsNotBackedUp()
         packageService.notBackedUpPackages.forEach { packageInfo ->
             val packageName = packageInfo.packageName
+            if (!settingsManager.isBackupEnabled(packageName)) return@forEach
             try {
                 val packageState = if (packageInfo.isStopped()) WAS_STOPPED else NOT_ALLOWED
                 val packageMetadata = metadataManager.getPackageMetadata(packageName)
@@ -92,6 +98,17 @@ internal class ApkBackupManager(
         }
     }
 
+    private suspend fun uploadIcons() {
+        try {
+            val token = settingsManager.getToken() ?: throw IOException("no current token")
+            pluginManager.appPlugin.getOutputStream(token, FILE_BACKUP_ICONS).use {
+                iconManager.uploadIcons(token, it)
+            }
+        } catch (e: IOException) {
+            Log.e(TAG, "Error uploading icons: ", e)
+        }
+    }
+
     /**
      * Backs up an APK for the given [PackageInfo].
      *
@@ -102,13 +119,14 @@ internal class ApkBackupManager(
         return try {
             apkBackup.backupApkIfNecessary(packageInfo) { name ->
                 val token = settingsManager.getToken() ?: throw IOException("no current token")
-                plugin.getOutputStream(token, name)
+                pluginManager.appPlugin.getOutputStream(token, name)
             }?.let { packageMetadata ->
                 metadataManager.onApkBackedUp(packageInfo, packageMetadata)
                 true
             } ?: false
         } catch (e: IOException) {
             Log.e(TAG, "Error while writing APK for $packageName", e)
+            if (e.isOutOfSpace()) nm.onInsufficientSpaceError()
             false
         }
     }
@@ -125,7 +143,9 @@ internal class ApkBackupManager(
         }
     }
 
-    private suspend fun StoragePlugin.getMetadataOutputStream(token: Long? = null): OutputStream {
+    private suspend fun StoragePlugin<*>.getMetadataOutputStream(
+        token: Long? = null,
+    ): OutputStream {
         val t = token ?: settingsManager.getToken() ?: throw IOException("no current token")
         return getOutputStream(t, FILE_BACKUP_METADATA)
     }

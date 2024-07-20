@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2020 The Calyx Institute
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 package com.stevesoltys.seedvault.plugins.saf
 
 import android.content.Context
@@ -19,7 +24,6 @@ import org.robolectric.annotation.Config
 
 @RunWith(AndroidJUnit4::class)
 @Config(
-    sdk = [33], // robolectric does not support 34, yet
     application = TestApp::class
 )
 internal class DocumentFileTest {

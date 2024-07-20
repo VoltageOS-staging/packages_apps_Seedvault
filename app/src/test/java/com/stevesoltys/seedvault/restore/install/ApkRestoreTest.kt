@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2020 The Calyx Institute
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 package com.stevesoltys.seedvault.restore.install
 
 import android.content.Context
@@ -7,6 +12,8 @@ import android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
+import app.cash.turbine.TurbineTestContext
+import app.cash.turbine.test
 import com.stevesoltys.seedvault.getRandomBase64
 import com.stevesoltys.seedvault.getRandomByteArray
 import com.stevesoltys.seedvault.getRandomString
@@ -15,6 +22,7 @@ import com.stevesoltys.seedvault.metadata.PackageMetadata
 import com.stevesoltys.seedvault.metadata.PackageMetadataMap
 import com.stevesoltys.seedvault.plugins.LegacyStoragePlugin
 import com.stevesoltys.seedvault.plugins.StoragePlugin
+import com.stevesoltys.seedvault.plugins.StoragePluginManager
 import com.stevesoltys.seedvault.restore.RestorableBackup
 import com.stevesoltys.seedvault.restore.install.ApkInstallState.FAILED
 import com.stevesoltys.seedvault.restore.install.ApkInstallState.FAILED_SYSTEM_APP
@@ -26,13 +34,11 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.collectIndexed
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
-import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.ByteArrayInputStream
@@ -41,7 +47,6 @@ import java.io.IOException
 import java.nio.file.Path
 import kotlin.random.Random
 
-@Suppress("BlockingMethodInNonBlockingContext")
 @ExperimentalCoroutinesApi
 internal class ApkRestoreTest : TransportTest() {
 
@@ -49,18 +54,21 @@ internal class ApkRestoreTest : TransportTest() {
     private val strictContext: Context = mockk<Context>().apply {
         every { packageManager } returns pm
     }
-    private val storagePlugin: StoragePlugin = mockk()
+    private val storagePluginManager: StoragePluginManager = mockk()
+    private val storagePlugin: StoragePlugin<*> = mockk()
     private val legacyStoragePlugin: LegacyStoragePlugin = mockk()
     private val splitCompatChecker: ApkSplitCompatibilityChecker = mockk()
     private val apkInstaller: ApkInstaller = mockk()
+    private val installRestriction: InstallRestriction = mockk()
 
     private val apkRestore: ApkRestore = ApkRestore(
-        strictContext,
-        storagePlugin,
-        legacyStoragePlugin,
-        crypto,
-        splitCompatChecker,
-        apkInstaller
+        context = strictContext,
+        pluginManager = storagePluginManager,
+        legacyStoragePlugin = legacyStoragePlugin,
+        crypto = crypto,
+        splitCompatChecker = splitCompatChecker,
+        apkInstaller = apkInstaller,
+        installRestriction = installRestriction,
     )
 
     private val icon: Drawable = mockk()
@@ -85,6 +93,8 @@ internal class ApkRestoreTest : TransportTest() {
     init {
         // as we don't do strict signature checking, we can use a relaxed mock
         packageInfo.signingInfo = mockk(relaxed = true)
+
+        every { storagePluginManager.appPlugin } returns storagePlugin
     }
 
     @Test
@@ -93,13 +103,16 @@ internal class ApkRestoreTest : TransportTest() {
         val packageMetadata = packageMetadata.copy(sha256 = getRandomString())
         val backup = swapPackages(hashMapOf(packageName to packageMetadata))
 
+        every { installRestriction.isAllowedToInstallApks() } returns true
         every { strictContext.cacheDir } returns File(tmpDir.toString())
         every { crypto.getNameForApk(salt, packageName, "") } returns name
         coEvery { storagePlugin.getInputStream(token, name) } returns apkInputStream
         every { storagePlugin.providerPackageName } returns storageProviderPackageName
 
-        apkRestore.restore(backup).collectIndexed { i, value ->
-            assertQueuedFailFinished(i, value)
+        apkRestore.installResult.test {
+            awaitItem() // initial empty state
+            apkRestore.restore(backup)
+            assertQueuedFailFinished()
         }
     }
 
@@ -108,50 +121,58 @@ internal class ApkRestoreTest : TransportTest() {
         // change package name to random string
         packageInfo.packageName = getRandomString()
 
+        every { installRestriction.isAllowedToInstallApks() } returns true
         every { strictContext.cacheDir } returns File(tmpDir.toString())
         every { crypto.getNameForApk(salt, packageName, "") } returns name
         coEvery { storagePlugin.getInputStream(token, name) } returns apkInputStream
         every { pm.getPackageArchiveInfo(any(), any<Int>()) } returns packageInfo
         every { storagePlugin.providerPackageName } returns storageProviderPackageName
 
-        apkRestore.restore(backup).collectIndexed { i, value ->
-            assertQueuedFailFinished(i, value)
+        apkRestore.installResult.test {
+            awaitItem() // initial empty state
+            apkRestore.restore(backup)
+            assertQueuedFailFinished()
         }
     }
 
     @Test
     fun `test apkInstaller throws exceptions`(@TempDir tmpDir: Path) = runBlocking {
+        every { installRestriction.isAllowedToInstallApks() } returns true
         cacheBaseApkAndGetInfo(tmpDir)
         coEvery {
             apkInstaller.install(match { it.size == 1 }, packageName, installerName, any())
         } throws SecurityException()
         every { storagePlugin.providerPackageName } returns storageProviderPackageName
 
-        apkRestore.restore(backup).collectIndexed { i, value ->
-            assertQueuedProgressFailFinished(i, value)
+        apkRestore.installResult.test {
+            awaitItem() // initial empty state
+            apkRestore.restore(backup)
+            assertQueuedProgressFailFinished()
         }
     }
 
     @Test
     fun `test successful run`(@TempDir tmpDir: Path) = runBlocking {
-        val installResult = MutableInstallResult(1).apply {
-            set(
-                packageName, ApkInstallResult(
-                    packageName,
-                    progress = 1,
-                    state = SUCCEEDED
-                )
+        val packagesMap = mapOf(
+            packageName to ApkInstallResult(
+                packageName,
+                state = SUCCEEDED,
+                metadata = PackageMetadata(),
             )
-        }
+        )
+        val installResult = InstallResult(packagesMap)
 
+        every { installRestriction.isAllowedToInstallApks() } returns true
         cacheBaseApkAndGetInfo(tmpDir)
         coEvery {
             apkInstaller.install(match { it.size == 1 }, packageName, installerName, any())
         } returns installResult
         every { storagePlugin.providerPackageName } returns storageProviderPackageName
 
-        apkRestore.restore(backup).collectIndexed { i, value ->
-            assertQueuedProgressSuccessFinished(i, value)
+        apkRestore.installResult.test {
+            awaitItem() // initial empty state
+            apkRestore.restore(backup)
+            assertQueuedProgressSuccessFinished()
         }
     }
 
@@ -160,18 +181,17 @@ internal class ApkRestoreTest : TransportTest() {
         // This is a legacy backup with version 0
         val backup = backup.copy(backupMetadata = backup.backupMetadata.copy(version = 0))
         // Install will be successful
-        val installResult = MutableInstallResult(1).apply {
-            set(
-                packageName, ApkInstallResult(
-                    packageName,
-                    progress = 1,
-                    state = SUCCEEDED
-                )
+        val packagesMap = mapOf(
+            packageName to ApkInstallResult(
+                packageName,
+                state = SUCCEEDED,
+                metadata = PackageMetadata(),
             )
-        }
+        )
+        val installResult = InstallResult(packagesMap)
 
+        every { installRestriction.isAllowedToInstallApks() } returns true
         every { strictContext.cacheDir } returns File(tmpDir.toString())
-        @Suppress("Deprecation")
         coEvery {
             legacyStoragePlugin.getApkInputStream(token, packageName, "")
         } returns apkInputStream
@@ -183,8 +203,10 @@ internal class ApkRestoreTest : TransportTest() {
         } returns installResult
         every { storagePlugin.providerPackageName } returns storageProviderPackageName
 
-        apkRestore.restore(backup).collectIndexed { i, value ->
-            assertQueuedProgressSuccessFinished(i, value)
+        apkRestore.installResult.test {
+            awaitItem() // initial empty state
+            apkRestore.restore(backup)
+            assertQueuedProgressSuccessFinished()
         }
     }
 
@@ -197,6 +219,7 @@ internal class ApkRestoreTest : TransportTest() {
             val willFail = Random.nextBoolean()
             val isSystemApp = Random.nextBoolean()
 
+            every { installRestriction.isAllowedToInstallApks() } returns true
             cacheBaseApkAndGetInfo(tmpDir)
             every { storagePlugin.providerPackageName } returns storageProviderPackageName
 
@@ -212,12 +235,14 @@ internal class ApkRestoreTest : TransportTest() {
                 every { pm.getPackageInfo(packageName, 0) } returns installedPackageInfo
                 every { installedPackageInfo.longVersionCode } returns packageMetadata.version!! - 1
                 if (isSystemApp) { // if the installed app is not a system app, we don't install
-                    val installResult = MutableInstallResult(1).apply {
-                        set(
+                    val packagesMap = mapOf(
+                        packageName to ApkInstallResult(
                             packageName,
-                            ApkInstallResult(packageName, progress = 1, state = SUCCEEDED)
+                            state = SUCCEEDED,
+                            metadata = PackageMetadata(),
                         )
-                    }
+                    )
+                    val installResult = InstallResult(packagesMap)
                     coEvery {
                         apkInstaller.install(
                             match { it.size == 1 },
@@ -229,33 +254,23 @@ internal class ApkRestoreTest : TransportTest() {
                 }
             }
 
-            apkRestore.restore(backup).collectIndexed { i, value ->
-                when (i) {
-                    0 -> {
-                        val result = value[packageName]
-                        assertEquals(QUEUED, result.state)
-                        assertEquals(1, result.progress)
-                        assertEquals(1, value.total)
+            apkRestore.installResult.test {
+                awaitItem() // initial empty state
+                apkRestore.restore(backup)
+                awaitQueuedItem()
+                awaitInProgressItem()
+                awaitItem().also { systemItem ->
+                    val result = systemItem[packageName]
+                    if (willFail) {
+                        assertEquals(FAILED_SYSTEM_APP, result.state)
+                    } else {
+                        assertEquals(SUCCEEDED, result.state)
                     }
-                    1 -> {
-                        val result = value[packageName]
-                        assertEquals(IN_PROGRESS, result.state)
-                        assertEquals(appName, result.name)
-                        assertEquals(icon, result.icon)
-                    }
-                    2 -> {
-                        val result = value[packageName]
-                        if (willFail) {
-                            assertEquals(FAILED_SYSTEM_APP, result.state)
-                        } else {
-                            assertEquals(SUCCEEDED, result.state)
-                        }
-                    }
-                    3 -> {
-                        assertTrue(value.isFinished)
-                    }
-                    else -> fail("more values emitted")
                 }
+                awaitItem().also { finishedItem ->
+                    assertTrue(finishedItem.isFinished)
+                }
+                ensureAllEventsConsumed()
             }
         }
 
@@ -266,11 +281,12 @@ internal class ApkRestoreTest : TransportTest() {
         val split2Name = getRandomString()
         packageMetadataMap[packageName] = packageMetadataMap[packageName]!!.copy(
             splits = listOf(
-                ApkSplit(split1Name, getRandomBase64()),
-                ApkSplit(split2Name, getRandomBase64())
+                ApkSplit(split1Name, Random.nextLong(), getRandomBase64()),
+                ApkSplit(split2Name, Random.nextLong(), getRandomBase64())
             )
         )
 
+        every { installRestriction.isAllowedToInstallApks() } returns true
         // cache APK and get icon as well as app name
         cacheBaseApkAndGetInfo(tmpDir)
 
@@ -280,8 +296,10 @@ internal class ApkRestoreTest : TransportTest() {
         } returns false
         every { storagePlugin.providerPackageName } returns storageProviderPackageName
 
-        apkRestore.restore(backup).collectIndexed { i, value ->
-            assertQueuedProgressFailFinished(i, value)
+        apkRestore.installResult.test {
+            awaitItem() // initial empty state
+            apkRestore.restore(backup)
+            assertQueuedProgressFailFinished()
         }
     }
 
@@ -290,9 +308,10 @@ internal class ApkRestoreTest : TransportTest() {
         // add one APK split to metadata
         val splitName = getRandomString()
         packageMetadataMap[packageName] = packageMetadataMap[packageName]!!.copy(
-            splits = listOf(ApkSplit(splitName, getRandomBase64(23)))
+            splits = listOf(ApkSplit(splitName, Random.nextLong(), getRandomBase64(23)))
         )
 
+        every { installRestriction.isAllowedToInstallApks() } returns true
         // cache APK and get icon as well as app name
         cacheBaseApkAndGetInfo(tmpDir)
 
@@ -303,8 +322,10 @@ internal class ApkRestoreTest : TransportTest() {
         } returns ByteArrayInputStream(getRandomByteArray())
         every { storagePlugin.providerPackageName } returns storageProviderPackageName
 
-        apkRestore.restore(backup).collectIndexed { i, value ->
-            assertQueuedProgressFailFinished(i, value)
+        apkRestore.installResult.test {
+            awaitItem() // initial empty state
+            apkRestore.restore(backup)
+            assertQueuedProgressFailFinished()
         }
     }
 
@@ -315,9 +336,10 @@ internal class ApkRestoreTest : TransportTest() {
             val splitName = getRandomString()
             val sha256 = getRandomBase64(23)
             packageMetadataMap[packageName] = packageMetadataMap[packageName]!!.copy(
-                splits = listOf(ApkSplit(splitName, sha256))
+                splits = listOf(ApkSplit(splitName, Random.nextLong(), sha256))
             )
 
+            every { installRestriction.isAllowedToInstallApks() } returns true
             // cache APK and get icon as well as app name
             cacheBaseApkAndGetInfo(tmpDir)
 
@@ -326,8 +348,10 @@ internal class ApkRestoreTest : TransportTest() {
             coEvery { storagePlugin.getInputStream(token, suffixName) } throws IOException()
             every { storagePlugin.providerPackageName } returns storageProviderPackageName
 
-            apkRestore.restore(backup).collectIndexed { i, value ->
-                assertQueuedProgressFailFinished(i, value)
+            apkRestore.installResult.test {
+                awaitItem() // initial empty state
+                apkRestore.restore(backup)
+                assertQueuedProgressFailFinished()
             }
         }
 
@@ -340,11 +364,12 @@ internal class ApkRestoreTest : TransportTest() {
         val split2sha256 = "ZqZ1cVH47lXbEncWx-Pc4L6AdLZOIO2lQuXB5GypxB4"
         packageMetadataMap[packageName] = packageMetadataMap[packageName]!!.copy(
             splits = listOf(
-                ApkSplit(split1Name, split1sha256),
-                ApkSplit(split2Name, split2sha256)
+                ApkSplit(split1Name, Random.nextLong(), split1sha256),
+                ApkSplit(split2Name, Random.nextLong(), split2sha256)
             )
         )
 
+        every { installRestriction.isAllowedToInstallApks() } returns true
         // cache APK and get icon as well as app name
         cacheBaseApkAndGetInfo(tmpDir)
 
@@ -365,41 +390,84 @@ internal class ApkRestoreTest : TransportTest() {
         coEvery { storagePlugin.getInputStream(token, suffixName2) } returns split2InputStream
         every { storagePlugin.providerPackageName } returns storageProviderPackageName
 
+        val resultMap = mapOf(
+            packageName to ApkInstallResult(
+                packageName,
+                state = SUCCEEDED,
+                metadata = PackageMetadata(),
+            )
+        )
         coEvery {
             apkInstaller.install(match { it.size == 3 }, packageName, installerName, any())
-        } returns MutableInstallResult(1).apply {
-            set(
-                packageName, ApkInstallResult(
-                    packageName,
-                    progress = 1,
-                    state = SUCCEEDED
-                )
-            )
-        }
+        } returns InstallResult(resultMap)
 
-        apkRestore.restore(backup).collectIndexed { i, value ->
-            assertQueuedProgressSuccessFinished(i, value)
+        apkRestore.installResult.test {
+            awaitItem() // initial empty state
+            apkRestore.restore(backup)
+            assertQueuedProgressSuccessFinished()
         }
     }
 
     @Test
-    fun `storage provider app does not get reinstalled`(@TempDir tmpDir: Path) = runBlocking {
+    fun `storage provider app does not get reinstalled`() = runBlocking {
+        every { installRestriction.isAllowedToInstallApks() } returns true
         // set the storage provider package name to match our current package name,
         // and ensure that the current package is therefore skipped.
         every { storagePlugin.providerPackageName } returns packageName
 
-        apkRestore.restore(backup).collectIndexed { i, value ->
-            when (i) {
-                0 -> {
-                    assertFalse(value.isFinished)
-                }
-                1 -> {
-                    // the only package provided should have been filtered, leaving 0 packages.
-                    assertEquals(0, value.total)
-                    assertTrue(value.isFinished)
-                }
-                else -> fail("more values emitted")
+        apkRestore.installResult.test {
+            awaitItem() // initial empty state
+            apkRestore.restore(backup)
+            awaitItem().also { finishedItem ->
+                // the only package provided should have been filtered, leaving 0 packages.
+                assertEquals(0, finishedItem.total)
+                assertTrue(finishedItem.isFinished)
             }
+            ensureAllEventsConsumed()
+        }
+    }
+
+    @Test
+    fun `system app without APK get filtered out`() = runBlocking {
+        // only backed up package is a system app without an APK
+        packageMetadataMap[packageName] = PackageMetadata(
+            time = 23L,
+            system = true,
+            isLaunchableSystemApp = Random.nextBoolean(),
+        ).also { assertFalse(it.hasApk()) }
+
+        every { installRestriction.isAllowedToInstallApks() } returns true
+        every { storagePlugin.providerPackageName } returns storageProviderPackageName
+
+        apkRestore.installResult.test {
+            awaitItem() // initial empty state
+            apkRestore.restore(backup)
+
+            awaitItem().also { finishedItem ->
+                println(finishedItem.installResults.values.toList())
+                // the only package provided should have been filtered, leaving 0 packages.
+                assertEquals(0, finishedItem.total)
+                assertTrue(finishedItem.isFinished)
+            }
+            ensureAllEventsConsumed()
+        }
+    }
+
+    @Test
+    fun `no apks get installed when blocked by policy`() = runBlocking {
+        every { installRestriction.isAllowedToInstallApks() } returns false
+        every { storagePlugin.providerPackageName } returns storageProviderPackageName
+
+        apkRestore.installResult.test {
+            awaitItem() // initial empty state
+            apkRestore.restore(backup)
+            awaitItem().also { queuedItem ->
+                // single package fails without attempting to install it
+                assertEquals(1, queuedItem.total)
+                assertEquals(FAILED, queuedItem[packageName].state)
+                assertTrue(queuedItem.isFinished)
+            }
+            ensureAllEventsConsumed()
         }
     }
 
@@ -417,74 +485,78 @@ internal class ApkRestoreTest : TransportTest() {
         every { pm.getApplicationLabel(packageInfo.applicationInfo) } returns appName
     }
 
-    private fun assertQueuedFailFinished(step: Int, value: InstallResult) = when (step) {
-        0 -> assertQueuedProgress(step, value)
-        1 -> {
-            val result = value[packageName]
+    private suspend fun TurbineTestContext<InstallResult>.assertQueuedFailFinished() {
+        awaitQueuedItem()
+        awaitItem().also { failedItem ->
+            val result = failedItem[packageName]
             assertEquals(FAILED, result.state)
-            assertTrue(value.hasFailed)
-            assertFalse(value.isFinished)
+            assertTrue(failedItem.hasFailed)
+            assertFalse(failedItem.isFinished)
         }
-        2 -> {
-            assertTrue(value.hasFailed)
-            assertTrue(value.isFinished)
+        awaitItem().also { finishedItem ->
+            assertTrue(finishedItem.hasFailed)
+            assertTrue(finishedItem.isFinished)
         }
-        else -> fail("more values emitted")
+        ensureAllEventsConsumed()
     }
 
-    private fun assertQueuedProgressSuccessFinished(step: Int, value: InstallResult) = when (step) {
-        0 -> assertQueuedProgress(step, value)
-        1 -> assertQueuedProgress(step, value)
-        2 -> {
-            val result = value[packageName]
+    private suspend fun TurbineTestContext<InstallResult>.assertQueuedProgressSuccessFinished() {
+        awaitQueuedItem()
+        awaitInProgressItem()
+        awaitItem().also { successItem ->
+            val result = successItem[packageName]
             assertEquals(SUCCEEDED, result.state)
         }
-        3 -> {
-            assertFalse(value.hasFailed)
-            assertTrue(value.isFinished)
+        awaitItem().also { finishedItem ->
+            assertFalse(finishedItem.hasFailed)
+            assertTrue(finishedItem.isFinished)
         }
-        else -> fail("more values emitted")
+        ensureAllEventsConsumed()
     }
 
-    private fun assertQueuedProgressFailFinished(step: Int, value: InstallResult) = when (step) {
-        0 -> assertQueuedProgress(step, value)
-        1 -> assertQueuedProgress(step, value)
-        2 -> {
+    private suspend fun TurbineTestContext<InstallResult>.assertQueuedProgressFailFinished() {
+        awaitQueuedItem()
+        awaitInProgressItem()
+        awaitItem().also { failedItem ->
             // app install has failed
-            val result = value[packageName]
+            val result = failedItem[packageName]
             assertEquals(FAILED, result.state)
-            assertTrue(value.hasFailed)
-            assertFalse(value.isFinished)
+            assertTrue(failedItem.hasFailed)
+            assertFalse(failedItem.isFinished)
         }
-        3 -> {
-            assertTrue(value.hasFailed)
-            assertTrue(value.isFinished)
+        awaitItem().also { finishedItem ->
+            assertTrue(finishedItem.hasFailed)
+            assertTrue(finishedItem.isFinished)
         }
-        else -> fail("more values emitted")
+        ensureAllEventsConsumed()
     }
 
-    private fun assertQueuedProgress(step: Int, value: InstallResult) = when (step) {
-        0 -> {
-            // single package gets queued
-            val result = value[packageName]
-            assertEquals(QUEUED, result.state)
-            assertEquals(installerName, result.installerPackageName)
-            assertEquals(1, result.progress)
-            assertEquals(1, value.total)
-        }
-        1 -> {
-            // name and icon are available now
-            val result = value[packageName]
-            assertEquals(IN_PROGRESS, result.state)
-            assertEquals(appName, result.name)
-            assertEquals(icon, result.icon)
-            assertFalse(value.hasFailed)
-        }
-        else -> fail("more values emitted")
+    private suspend fun TurbineTestContext<InstallResult>.awaitQueuedItem(): InstallResult {
+        val item = awaitItem()
+        // single package gets queued
+        val result = item[packageName]
+        assertEquals(QUEUED, result.state)
+        assertEquals(installerName, result.installerPackageName)
+        assertEquals(1, item.total)
+        assertEquals(0, item.list.size) // all items still queued
+        return item
+    }
+
+    private suspend fun TurbineTestContext<InstallResult>.awaitInProgressItem(): InstallResult {
+        val item = awaitItem()
+        // name and icon are available now
+        val result = item[packageName]
+        assertEquals(IN_PROGRESS, result.state)
+        assertEquals(appName, result.name)
+        assertEquals(icon, result.icon)
+        assertFalse(item.hasFailed)
+        assertEquals(1, item.total)
+        assertEquals(1, item.list.size)
+        return item
     }
 
 }
 
 private operator fun InstallResult.get(packageName: String): ApkInstallResult {
-    return (this as MutableInstallResult)[packageName] ?: Assertions.fail("$packageName not found")
+    return this.installResults[packageName] ?: Assertions.fail("$packageName not found")
 }

@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2023 The Calyx Institute
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 package com.stevesoltys.seedvault.e2e
 
 import android.content.pm.PackageInfo
@@ -67,6 +72,10 @@ internal interface LargeRestoreTestBase : LargeTestBase {
             backupListItem.clickAndWaitForNewWindow()
             waitUntilIdle()
 
+            waitForAppSelectionLoaded()
+            // just tap next in app selection
+            appsSelectedButton.clickAndWaitForNewWindow()
+
             waitForInstallResult()
 
             if (someAppsNotInstalledText.exists()) {
@@ -99,13 +108,22 @@ internal interface LargeRestoreTestBase : LargeTestBase {
         spyOnKVRestoreData(result)
     }
 
+    private fun waitForAppSelectionLoaded() = runBlocking {
+        withContext(Dispatchers.Main) {
+            withTimeout(RESTORE_TIMEOUT) {
+                while (spyRestoreViewModel.selectedApps.value?.apps?.isNotEmpty() != true) {
+                    delay(100)
+                }
+            }
+        }
+        waitUntilIdle()
+    }
+
     private fun waitForInstallResult() = runBlocking {
 
         withContext(Dispatchers.Main) {
             withTimeout(RESTORE_TIMEOUT) {
-                while (spyRestoreViewModel.installResult.value == null ||
-                    spyRestoreViewModel.nextButtonEnabled.value == false
-                ) {
+                while (spyRestoreViewModel.installResult.value?.isFinished != true) {
                     delay(100)
                 }
             }

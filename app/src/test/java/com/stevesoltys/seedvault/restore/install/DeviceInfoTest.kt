@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2020 The Calyx Institute
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 package com.stevesoltys.seedvault.restore.install
 
 import android.content.Context
@@ -22,7 +27,6 @@ import kotlin.random.Random
 
 @RunWith(AndroidJUnit4::class)
 @Config(
-    sdk = [33], // robolectric does not support 34, yet
     application = TestApp::class
 )
 internal class DeviceInfoTest {

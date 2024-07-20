@@ -16,6 +16,13 @@ val workerModule = module {
             packageService = get(),
         )
     }
+    factory {
+        IconManager(
+            context = androidContext(),
+            packageService = get(),
+            crypto = get(),
+        )
+    }
     single {
         ApkBackup(
             pm = androidContext().packageManager,
@@ -31,7 +38,8 @@ val workerModule = module {
             metadataManager = get(),
             packageService = get(),
             apkBackup = get(),
-            plugin = get(),
+            iconManager = get(),
+            pluginManager = get(),
             nm = get()
         )
     }

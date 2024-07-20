@@ -1,3 +1,7 @@
+<!--
+  SPDX-FileCopyrightText: 2020 The Calyx Institute
+  SPDX-License-Identifier: Apache-2.0
+  -->
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
 
     <string name="app_name" translatable="false">Seedvault</string>
@@ -97,6 +101,16 @@
     <string name="storage_check_fragment_permission_error">Unable to get the permission to write to the backup location.</string>
     <string name="storage_check_fragment_error_button">Back</string>
 
+    <string name="storage_webdav_option_title">WebDAV Cloud (beta)</string>
+    <string name="storage_webdav_option_summary">Integrated direct WebDAV access</string>
+    <string name="storage_webdav_config_url">WebDAV URL</string>
+    <string name="storage_webdav_config_url_helper">Be sure to enter the full URL here. E.g. for Nextcloud, it has the form https://yourserver.com/remote.php/webdav</string>
+    <string name="storage_webdav_config_user">User name</string>
+    <string name="storage_webdav_config_pass">Password</string>
+    <string name="storage_webdav_config_button">Use WebDAV cloud</string>
+    <string name="storage_webdav_config_malformed_url">Invalid WebDAV URL</string>
+    <string name="storage_webdav_name">WebDAV %s</string>
+
     <!-- Recovery Code -->
     <string name="recovery_code_title">Recovery code</string>
     <string name="recovery_code_12_word_intro">You need your 12-word recovery code to restore backed up data.</string>
@@ -150,6 +164,9 @@
     <string name="notification_error_text">A device backup failed to run.</string>
     <string name="notification_error_action">Fix</string>
 
+    <string name="notification_space_error_title">Insufficient backup space</string>
+    <string name="notification_space_error_text">Your backup location is running out of space. Free up space, so backups can run.</string>
+
     <string name="notification_restore_error_channel_title">Auto restore flash drive error</string>
     <string name="notification_restore_error_title">Could not restore data for %1$s</string>
     <string name="notification_restore_error_text">Plug in your %1$s before installing the app to restore its data from backup.</string>
@@ -160,12 +177,13 @@
 
     <!-- App Backup and Restore State -->
 
-    <string name="backup_section_system">System apps</string>
+    <string name="backup_section_system">System data</string>
     <string name="backup_sms">SMS text messages</string>
     <string name="backup_settings">Device settings</string>
     <string name="backup_call_log">Call history</string>
     <string name="backup_contacts">Local contacts</string>
-    <string name="backup_section_user">Installed apps</string>
+    <string name="backup_system_apps">System apps</string>
+    <string name="backup_section_user">Apps</string>
     <!-- This text gets shown for apps that the OS did not try to backup for whatever reason e.g. no backup was run yet -->
     <string name="backup_app_not_yet_backed_up">Waiting to back up…</string>
     <string name="restore_app_not_yet_backed_up">Was not yet backed up</string>
@@ -185,12 +203,15 @@
     <string name="restore_title">Restore from backup</string>
     <string name="restore_choose_restore_set">Choose a backup to restore</string>
     <string name="restore_restore_set_times">Last backup %1$s · First %2$s.</string>
+    <string name="restore_restore_set_size">Size: <xliff:g example="1 GB" id="size">%1$s</xliff:g></string>
     <string name="restore_skip">Don\'t restore</string>
     <string name="restore_skip_apps">Skip restoring apps</string>
     <string name="restore_invalid_location_title">No backups found</string>
     <string name="restore_invalid_location_message">We could not find any backups at this location.\n\nPlease choose another location that contains a %s folder.</string>
     <string name="restore_set_error">An error occurred while loading the backups.</string>
     <string name="restore_set_empty_result">No suitable backups found at given location.\n\nThis is most likely due to a wrong recovery code or a storage error.</string>
+    <string name="restore_select_packages">Select apps to restore</string>
+    <string name="restore_select_packages_all">All of the following apps</string>
     <string name="restore_installing_packages">Re-installing apps</string>
     <string name="restore_app_status_installing">Re-installing</string>
     <string name="restore_app_status_installed">Re-installed</string>

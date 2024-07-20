@@ -1,7 +1,15 @@
+/*
+ * SPDX-FileCopyrightText: 2020 The Calyx Institute
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 package com.stevesoltys.seedvault.transport.backup
 
 import android.app.backup.IBackupManager
 import android.content.Context
+import android.content.Intent
+import android.content.Intent.ACTION_MAIN
+import android.content.Intent.CATEGORY_LAUNCHER
 import android.content.pm.ApplicationInfo.FLAG_ALLOW_BACKUP
 import android.content.pm.ApplicationInfo.FLAG_STOPPED
 import android.content.pm.ApplicationInfo.FLAG_SYSTEM
@@ -11,6 +19,8 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.content.pm.PackageManager.GET_INSTRUMENTATION
 import android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+import android.content.pm.PackageManager.MATCH_SYSTEM_ONLY
+import android.content.pm.ResolveInfo
 import android.os.RemoteException
 import android.os.UserHandle
 import android.util.Log
@@ -18,6 +28,7 @@ import android.util.Log.INFO
 import androidx.annotation.WorkerThread
 import com.stevesoltys.seedvault.MAGIC_PACKAGE_MANAGER
 import com.stevesoltys.seedvault.plugins.StoragePlugin
+import com.stevesoltys.seedvault.plugins.StoragePluginManager
 import com.stevesoltys.seedvault.settings.SettingsManager
 
 private val TAG = PackageService::class.java.simpleName
@@ -32,11 +43,12 @@ internal class PackageService(
     private val context: Context,
     private val backupManager: IBackupManager,
     private val settingsManager: SettingsManager,
-    private val plugin: StoragePlugin,
+    private val pluginManager: StoragePluginManager,
 ) {
 
     private val packageManager: PackageManager = context.packageManager
     private val myUserId = UserHandle.myUserId()
+    private val plugin: StoragePlugin<*> get() = pluginManager.appPlugin
 
     val eligiblePackages: List<String>
         @WorkerThread
@@ -138,6 +150,16 @@ internal class PackageService(
                 !packageInfo.allowsBackup() &&
                     !packageInfo.isSystemApp()
             }
+        }
+
+    val launchableSystemApps: List<ResolveInfo>
+        @WorkerThread
+        get() {
+            // filter intent for apps with a launcher activity
+            val i = Intent(ACTION_MAIN).apply {
+                addCategory(CATEGORY_LAUNCHER)
+            }
+            return packageManager.queryIntentActivities(i, MATCH_SYSTEM_ONLY)
         }
 
     fun getVersionName(packageName: String): String? = try {

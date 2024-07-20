@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2020 The Calyx Institute
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 package com.stevesoltys.seedvault.crypto
 
 import com.google.crypto.tink.subtle.AesGcmHkdfStreaming
@@ -115,6 +120,7 @@ internal interface Crypto {
 internal const val TYPE_METADATA: Byte = 0x00
 internal const val TYPE_BACKUP_KV: Byte = 0x01
 internal const val TYPE_BACKUP_FULL: Byte = 0x02
+internal const val TYPE_ICONS: Byte = 0x03
 
 internal class CryptoImpl(
     private val keyManager: KeyManager,

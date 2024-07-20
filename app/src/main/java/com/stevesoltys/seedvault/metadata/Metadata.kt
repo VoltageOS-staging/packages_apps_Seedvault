@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2020 The Calyx Institute
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 package com.stevesoltys.seedvault.metadata
 
 import android.content.pm.ApplicationInfo.FLAG_STOPPED
@@ -20,7 +25,12 @@ data class BackupMetadata(
     internal val deviceName: String = "${Build.MANUFACTURER} ${Build.MODEL}",
     internal var d2dBackup: Boolean = false,
     internal val packageMetadataMap: PackageMetadataMap = PackageMetadataMap(),
-)
+) {
+    val size: Long
+        get() = packageMetadataMap.values.sumOf { m ->
+            (m.size ?: 0L) + (m.splits?.sumOf { it.size ?: 0L } ?: 0L)
+        }
+}
 
 internal const val JSON_METADATA = "@meta@"
 internal const val JSON_METADATA_VERSION = "version"
@@ -75,13 +85,16 @@ data class PackageMetadata(
     internal var state: PackageState = UNKNOWN_ERROR,
     internal var backupType: BackupType? = null,
     internal var size: Long? = null,
+    internal var name: CharSequence? = null,
     internal val system: Boolean = false,
+    internal val isLaunchableSystemApp: Boolean = false,
     internal val version: Long? = null,
     internal val installer: String? = null,
     internal val splits: List<ApkSplit>? = null,
     internal val sha256: String? = null,
     internal val signatures: List<String>? = null,
 ) {
+    val isInternalSystem: Boolean = system && !isLaunchableSystemApp
     fun hasApk(): Boolean {
         return version != null && sha256 != null && signatures != null
     }
@@ -89,6 +102,7 @@ data class PackageMetadata(
 
 data class ApkSplit(
     val name: String,
+    val size: Long?,
     val sha256: String,
     // There's also a revisionCode, but it doesn't seem to be used just yet
 )
@@ -99,7 +113,9 @@ internal const val JSON_PACKAGE_TIME = "time"
 internal const val JSON_PACKAGE_BACKUP_TYPE = "backupType"
 internal const val JSON_PACKAGE_STATE = "state"
 internal const val JSON_PACKAGE_SIZE = "size"
+internal const val JSON_PACKAGE_APP_NAME = "name"
 internal const val JSON_PACKAGE_SYSTEM = "system"
+internal const val JSON_PACKAGE_SYSTEM_LAUNCHER = "systemLauncher"
 internal const val JSON_PACKAGE_VERSION = "version"
 internal const val JSON_PACKAGE_INSTALLER = "installer"
 internal const val JSON_PACKAGE_SPLITS = "splits"

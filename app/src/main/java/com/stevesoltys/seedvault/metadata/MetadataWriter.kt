@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2020 The Calyx Institute
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 package com.stevesoltys.seedvault.metadata
 
 import com.stevesoltys.seedvault.Utf8
@@ -52,8 +57,14 @@ internal class MetadataWriterImpl(private val crypto: Crypto) : MetadataWriter {
                 if (packageMetadata.size != null) {
                     put(JSON_PACKAGE_SIZE, packageMetadata.size)
                 }
+                if (packageMetadata.name != null) {
+                    put(JSON_PACKAGE_APP_NAME, packageMetadata.name)
+                }
                 if (packageMetadata.system) {
-                    put(JSON_PACKAGE_SYSTEM, packageMetadata.system)
+                    put(JSON_PACKAGE_SYSTEM, true)
+                }
+                if (packageMetadata.isLaunchableSystemApp) {
+                    put(JSON_PACKAGE_SYSTEM_LAUNCHER, true)
                 }
                 packageMetadata.version?.let { put(JSON_PACKAGE_VERSION, it) }
                 packageMetadata.installer?.let { put(JSON_PACKAGE_INSTALLER, it) }
@@ -61,6 +72,7 @@ internal class MetadataWriterImpl(private val crypto: Crypto) : MetadataWriter {
                     put(JSON_PACKAGE_SPLITS, JSONArray().apply {
                         for (split in splits) put(JSONObject().apply {
                             put(JSON_PACKAGE_SPLIT_NAME, split.name)
+                            if (split.size != null) put(JSON_PACKAGE_SIZE, split.size)
                             put(JSON_PACKAGE_SHA256, split.sha256)
                         })
                     })
