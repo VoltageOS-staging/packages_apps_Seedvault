@@ -57,6 +57,8 @@ class StorageActivity : BackupActivity() {
 
         setContentView(R.layout.activity_fragment_container)
 
+        setupInsets(requireViewById(R.id.main_layout))
+
         viewModel = if (isRestore()) {
             getViewModel<RestoreStorageViewModel>()
         } else {
