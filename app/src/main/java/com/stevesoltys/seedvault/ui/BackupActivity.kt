@@ -5,6 +5,7 @@
 
 package com.stevesoltys.seedvault.ui
 
+import android.os.Bundle
 import android.view.MenuItem
 import android.view.View
 import androidx.annotation.CallSuper
@@ -30,6 +31,11 @@ abstract class BackupActivity : AppCompatActivity() {
             )
             insets
         }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        setupEdgeToEdge()
+        super.onCreate(savedInstanceState)
     }
 
     @CallSuper
