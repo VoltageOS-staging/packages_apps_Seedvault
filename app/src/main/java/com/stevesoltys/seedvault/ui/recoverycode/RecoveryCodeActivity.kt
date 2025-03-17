@@ -25,8 +25,6 @@ class RecoveryCodeActivity : BackupActivity() {
 
         setContentView(R.layout.activity_recovery_code)
 
-        setupInsets(requireViewById(R.id.fragment))
-
         viewModel.isRestore = isRestore()
         viewModel.confirmButtonClicked.observeEvent(this) { clicked ->
             if (clicked) showInput(true)

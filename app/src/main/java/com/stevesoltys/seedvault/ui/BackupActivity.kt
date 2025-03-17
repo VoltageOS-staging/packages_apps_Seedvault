@@ -7,31 +7,12 @@ package com.stevesoltys.seedvault.ui
 
 import android.os.Bundle
 import android.view.MenuItem
-import android.view.View
 import androidx.annotation.CallSuper
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.graphics.Insets
 import androidx.fragment.app.Fragment
 import com.stevesoltys.seedvault.R
 
 abstract class BackupActivity : AppCompatActivity() {
-
-    protected fun setupInsets(rootView: View) {
-        // Handle window insets for padding adjustments
-        ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, insets ->
-            val systemInsets: Insets = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-
-            view.setPadding(
-                view.paddingLeft,
-                systemInsets.top,
-                view.paddingRight,
-                systemInsets.bottom
-            )
-            insets
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         setupEdgeToEdge()
