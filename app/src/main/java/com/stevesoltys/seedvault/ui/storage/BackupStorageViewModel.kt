@@ -10,6 +10,7 @@ import android.app.backup.IBackupManager
 import android.app.job.JobInfo
 import android.os.UserHandle
 import android.util.Log
+import androidx.annotation.UiThread
 import androidx.lifecycle.viewModelScope
 import androidx.work.ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE
 import com.stevesoltys.seedvault.R
@@ -23,6 +24,7 @@ import com.stevesoltys.seedvault.worker.AppBackupWorker
 import com.stevesoltys.seedvault.worker.BackupRequester.Companion.requestFilesAndAppBackup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.calyxos.backup.storage.api.StorageBackup
 import org.calyxos.backup.storage.backup.BackupJobService
 import org.calyxos.seedvault.core.backends.Backend
@@ -46,28 +48,43 @@ internal class BackupStorageViewModel(
 
     override val isRestoreOperation = false
 
+    @UiThread
     override fun onSafUriSet(safProperties: SafProperties) {
+        Log.i(TAG, "onSafUriSet(${safProperties.uri})")
         safHandler.save(safProperties)
-        safHandler.setPlugin(safProperties)
-        if (safProperties.isUsb) {
-            // disable storage backup if new storage is on USB
-            cancelBackupWorkers()
-        } else {
-            // enable it, just in case the previous storage was on USB,
-            // also to update the network requirement of the new storage
-            scheduleBackupWorkers()
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                safHandler.setPlugin(safProperties)
+            }
+            withContext(Dispatchers.Main) { // UiThread
+                if (safProperties.isUsb) {
+                    // disable storage backup if new storage is on USB
+                    Log.i(TAG, "Cancel backup workers, because we are on USB.")
+                    cancelBackupWorkers()
+                } else {
+                    // enable it, just in case the previous storage was on USB,
+                    // also to update the network requirement of the new storage
+                    scheduleBackupWorkers()
+                }
+                onNewBackendSet(safProperties.isUsb)
+            }
         }
-        onStorageLocationSet(safProperties.isUsb)
     }
 
     override fun onWebDavConfigSet(properties: WebDavProperties, backend: Backend) {
         webdavHandler.save(properties)
-        webdavHandler.setPlugin(properties, backend)
-        scheduleBackupWorkers()
-        onStorageLocationSet(isUsb = false)
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                webdavHandler.setPlugin(properties, backend)
+            }
+            withContext(Dispatchers.Main) {
+                scheduleBackupWorkers()
+                onNewBackendSet(isUsb = false)
+            }
+        }
     }
 
-    private fun onStorageLocationSet(isUsb: Boolean) {
+    private fun onNewBackendSet(isUsb: Boolean) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 // remove old storage snapshots and clear cache
@@ -99,18 +116,20 @@ internal class BackupStorageViewModel(
     }
 
     private fun scheduleBackupWorkers() {
-        val storage = backendManager.backendProperties ?: error("no storage available")
+        val backendProperties = backendManager.backendProperties ?: error("no storage available")
         // disable framework scheduling, because another transport may have enabled it
         backupManager.setFrameworkSchedulingEnabledForUser(UserHandle.myUserId(), false)
-        if (!storage.isUsb) {
+        if (!backendProperties.isUsb) {
             if (backupManager.isBackupEnabled) {
                 AppBackupWorker.schedule(app, settingsManager, CANCEL_AND_REENQUEUE)
             }
+            // FIXME this runs a backup right away (if constraints fulfilled)
+            //  and JobScheduler doesn't offer initial delay
             if (settingsManager.isStorageBackupEnabled()) BackupJobService.scheduleJob(
                 context = app,
                 jobServiceClass = StorageBackupJobService::class.java,
                 periodMillis = TimeUnit.HOURS.toMillis(24),
-                networkType = if (storage.requiresNetwork) JobInfo.NETWORK_TYPE_UNMETERED
+                networkType = if (backendProperties.requiresNetwork) JobInfo.NETWORK_TYPE_UNMETERED
                 else JobInfo.NETWORK_TYPE_NONE,
                 deviceIdle = false,
                 charging = true

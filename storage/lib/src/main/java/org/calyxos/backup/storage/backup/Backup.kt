@@ -11,6 +11,7 @@ import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.os.Build
 import android.text.format.Formatter
 import android.util.Log
+import okio.Buffer
 import org.calyxos.backup.storage.api.BackupObserver
 import org.calyxos.backup.storage.crypto.ChunkCrypto
 import org.calyxos.backup.storage.crypto.StreamCrypto
@@ -18,11 +19,14 @@ import org.calyxos.backup.storage.db.Db
 import org.calyxos.backup.storage.measure
 import org.calyxos.backup.storage.scanner.FileScanner
 import org.calyxos.backup.storage.scanner.FileScannerResult
-import org.calyxos.seedvault.core.backends.Backend
+import org.calyxos.seedvault.core.MemoryLogger
+import org.calyxos.seedvault.core.backends.BackendSaver
 import org.calyxos.seedvault.core.backends.FileBackupFileType
+import org.calyxos.seedvault.core.backends.IBackendManager
 import org.calyxos.seedvault.core.backends.TopLevelFolder
 import org.calyxos.seedvault.core.crypto.KeyManager
 import java.io.IOException
+import java.io.OutputStream
 import java.security.GeneralSecurityException
 import kotlin.time.Duration
 
@@ -44,7 +48,7 @@ internal class Backup(
     private val context: Context,
     private val db: Db,
     private val fileScanner: FileScanner,
-    private val backendGetter: () -> Backend,
+    private val backendManager: IBackendManager,
     private val androidId: String,
     keyManager: KeyManager,
     private val cacheRepopulater: ChunksCacheRepopulater,
@@ -60,7 +64,7 @@ internal class Backup(
     }
 
     private val contentResolver = context.contentResolver
-    private val backend get() = backendGetter()
+    private val backend get() = backendManager.backend
     private val filesCache = db.getFilesCache()
     private val chunksCache = db.getChunksCache()
 
@@ -75,13 +79,14 @@ internal class Backup(
         throw AssertionError(e)
     }
     private val chunkWriter =
-        ChunkWriter(streamCrypto, streamKey, chunksCache, backendGetter, androidId)
+        ChunkWriter(streamCrypto, streamKey, chunksCache, backendManager, androidId)
     private val hasMediaAccessPerm =
         context.checkSelfPermission(ACCESS_MEDIA_LOCATION) == PERMISSION_GRANTED
     private val fileBackup = FileBackup(
         contentResolver = contentResolver,
         hasMediaAccessPerm = hasMediaAccessPerm,
         filesCache = filesCache,
+        chunksCache = chunksCache,
         chunker = Chunker(mac, chunkSizeMax),
         chunkWriter = chunkWriter,
     )
@@ -89,23 +94,27 @@ internal class Backup(
         contentResolver = context.contentResolver,
         hasMediaAccessPerm = hasMediaAccessPerm,
         filesCache = filesCache,
+        chunksCache = chunksCache,
         zipChunker = ZipChunker(mac, chunkWriter),
     )
 
     @Throws(IOException::class, GeneralSecurityException::class)
     suspend fun runBackup(backupObserver: BackupObserver?) {
+        if (!backendManager.canDoBackupNow()) {
+            Log.w(TAG, "runBackup(): Can't do backup right now, aborting...")
+            throw IOException("Metered Network")
+        }
         backupObserver?.onStartScanning()
         var duration: Duration? = null
         try {
             // get available chunks, so we do not need to rely solely on local cache
             // for checking if a chunk already exists on storage
-            val chunkIds = ArrayList<String>()
+            val availableChunkIds = mutableMapOf<String, Long>()
             val topLevelFolder = TopLevelFolder.fromAndroidId(androidId)
             backend.list(topLevelFolder, FileBackupFileType.Blob::class) { fileInfo ->
-                chunkIds.add(fileInfo.fileHandle.name)
+                availableChunkIds[fileInfo.fileHandle.name] = fileInfo.size
             }
-            val availableChunkIds = chunkIds.toHashSet()
-            if (!chunksCache.areAllAvailableChunksCached(db, availableChunkIds)) {
+            if (!chunksCache.areAllAvailableChunksCached(availableChunkIds.keys)) {
                 cacheRepopulater.repopulate(streamKey, availableChunkIds)
             }
 
@@ -123,7 +132,7 @@ internal class Backup(
             // with its old (unreferenced) chunks eventually deleted.
             // If (one of) its chunk(s) is missing, it will count as changed and chunked again.
             duration = measure {
-                backupFiles(scanResult, availableChunkIds, backupObserver)
+                backupFiles(scanResult, availableChunkIds.keys, backupObserver)
             }
             Log.e(TAG, "Changed files backup took $duration")
         } finally {
@@ -134,23 +143,40 @@ internal class Backup(
     @Throws(IOException::class, GeneralSecurityException::class)
     private suspend fun backupFiles(
         filesResult: FileScannerResult,
-        availableChunkIds: HashSet<String>,
+        availableChunkIds: Set<String>,
         backupObserver: BackupObserver?,
     ) {
+        if (!backendManager.canDoBackupNow()) {
+            Log.w(TAG, "backupFiles(): Can't do backup right now, aborting...")
+            throw IOException("Metered Network")
+        }
+        val wasAborted = { !backendManager.canDoBackupNow() }
         val startTime = System.currentTimeMillis()
         val numSmallFiles = filesResult.smallFiles.size
         val smallResult = measure("Backing up $numSmallFiles small files") {
-            smallFileBackup.backupFiles(filesResult.smallFiles, availableChunkIds, backupObserver)
+            smallFileBackup.backupFiles(
+                files = filesResult.smallFiles,
+                availableChunkIds = availableChunkIds,
+                wasAborted = wasAborted,
+                backupObserver = backupObserver,
+            )
         }
+        if (!backendManager.canDoBackupNow()) {
+            Log.w(TAG, "backupFiles(): Can't do backup right now, aborting...")
+            throw IOException("Metered Network")
+        }
+        MemoryLogger.log()
         val numLargeFiles = filesResult.files.size
         val largeResult = measure("Backing up $numLargeFiles files") {
-            fileBackup.backupFiles(filesResult.files, availableChunkIds, backupObserver)
+            fileBackup.backupFiles(filesResult.files, availableChunkIds, wasAborted, backupObserver)
         }
+        MemoryLogger.log()
         val result = largeResult + smallResult
         if (result.isEmpty) return // TODO maybe warn user that nothing could get backed up?
         val backupSize = result.backupMediaFiles.sumOf { it.size } +
             result.backupDocumentFiles.sumOf { it.size }
         val endTime = System.currentTimeMillis()
+        MemoryLogger.log()
 
         val backupSnapshot: BackupSnapshot
         val snapshotWriteTime = measure {
@@ -163,15 +189,25 @@ internal class Backup(
                 .setTimeStart(startTime)
                 .setTimeEnd(endTime)
                 .build()
-            val fileHandle = FileBackupFileType.Snapshot(androidId, startTime)
-            backend.save(fileHandle).use { outputStream ->
-                outputStream.write(VERSION.toInt())
-                val ad = streamCrypto.getAssociatedDataForSnapshot(startTime)
-                streamCrypto.newEncryptingStream(streamKey, outputStream, ad)
-                    .use { encryptingStream ->
-                        backupSnapshot.writeTo(encryptingStream)
-                    }
+            val buffer = Buffer()
+            buffer.writeByte(VERSION.toInt())
+            val ad = streamCrypto.getAssociatedDataForSnapshot(startTime)
+            streamCrypto.newEncryptingStream(streamKey, buffer.outputStream(), ad).use { stream ->
+                backupSnapshot.writeTo(stream)
             }
+            MemoryLogger.log()
+            val fileHandle = FileBackupFileType.Snapshot(androidId, startTime)
+            val saver = object : BackendSaver {
+                override val size: Long = buffer.size
+                override val sha256: String? = null
+                override fun save(outputStream: OutputStream): Long {
+                    buffer.copyTo(outputStream)
+                    return size
+                }
+            }
+            backend.save(fileHandle, saver)
+            buffer.clear()
+            MemoryLogger.log()
         }
         val snapshotSize = backupSnapshot.serializedSize.toLong()
         val snapshotSizeStr = Formatter.formatShortFileSize(context, snapshotSize)

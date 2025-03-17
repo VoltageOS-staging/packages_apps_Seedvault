@@ -17,10 +17,10 @@ import androidx.fragment.app.Fragment
 import com.stevesoltys.seedvault.R
 import org.calyxos.backup.storage.api.SnapshotItem
 import org.calyxos.backup.storage.ui.restore.SnapshotFragment
-import org.koin.androidx.viewmodel.ext.android.sharedViewModel
+import org.koin.androidx.viewmodel.ext.android.activityViewModel
 
 internal class RestoreFilesFragment : SnapshotFragment() {
-    override val viewModel: RestoreViewModel by sharedViewModel()
+    override val viewModel: RestoreViewModel by activityViewModel()
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -29,11 +29,11 @@ internal class RestoreFilesFragment : SnapshotFragment() {
     ): View {
         val v = super.onCreateView(inflater, container, savedInstanceState)
 
-        val topStub: ViewStub = v.requireViewById(R.id.topStub)
+        val topStub: ViewStub = v.requireViewById(org.calyxos.backup.storage.R.id.topStub)
         topStub.layoutResource = R.layout.header_snapshots
         topStub.inflate()
 
-        val bottomStub: ViewStub = v.requireViewById(R.id.bottomStub)
+        val bottomStub: ViewStub = v.requireViewById(org.calyxos.backup.storage.R.id.bottomStub)
         bottomStub.layoutResource = R.layout.footer_snapshots
         val footer = bottomStub.inflate()
         val skipView: TextView = footer.requireViewById(R.id.skipView)

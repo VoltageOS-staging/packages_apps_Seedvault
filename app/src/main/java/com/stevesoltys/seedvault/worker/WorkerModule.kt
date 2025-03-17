@@ -33,12 +33,14 @@ val workerModule = module {
             backupReceiver = get(),
             appBackupManager = get(),
             settingsManager = get(),
+            blobCache = get(),
         )
     }
     single {
         ApkBackupManager(
             context = androidContext(),
             appBackupManager = get(),
+            backendManager = get(),
             settingsManager = get(),
             snapshotManager = get(),
             metadataManager = get(),

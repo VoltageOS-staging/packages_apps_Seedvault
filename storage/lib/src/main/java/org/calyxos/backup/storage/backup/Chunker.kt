@@ -15,9 +15,13 @@ import kotlin.math.min
 internal data class Chunk(
     val id: String,
     val offset: Long,
-    val size: Long,
+    val plaintextSize: Long,
 ) {
-    fun toCachedChunk() = CachedChunk(id, 0, size)
+    fun toCachedChunk(size: Long) = CachedChunk(
+        id = id,
+        refCount = 0,
+        size = size,
+    )
 }
 
 internal class Chunker(

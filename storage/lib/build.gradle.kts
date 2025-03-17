@@ -6,6 +6,7 @@ import com.google.protobuf.gradle.id
  */
 plugins {
     alias(libs.plugins.android.library)
+    alias(libs.plugins.androidx.room)
     alias(libs.plugins.google.ksp)
     alias(libs.plugins.google.protobuf)
     alias(libs.plugins.jetbrains.kotlin.android)
@@ -32,6 +33,10 @@ android {
         }
     }
 
+    sourceSets {
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -44,6 +49,10 @@ android {
             "-opt-in=kotlin.RequiresOptIn",
             "-Xexplicit-api=strict"
         )
+    }
+
+    room {
+        schemaDirectory("$projectDir/schemas")
     }
 
     protobuf {
@@ -90,17 +99,19 @@ dependencies {
     implementation(libs.androidx.lifecycle.livedata.ktx)
     implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.documentfile)
+    implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.google.material)
     implementation(libs.androidx.room.runtime)
     implementation(libs.google.protobuf.javalite)
+    implementation(libs.squareup.okio)
 
     ksp(group = "androidx.room", name = "room-compiler", version = libs.versions.room.get())
     lintChecks(libs.thirdegg.lint.rules)
-    testImplementation("junit:junit:${libs.versions.junit4.get()}")
-    testImplementation("io.mockk:mockk:${libs.versions.mockk.get()}")
-    testImplementation("org.jetbrains.kotlin:kotlin-test-junit:${libs.versions.kotlin.get()}")
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation(
-        "androidx.test.espresso:espresso-core:${libs.versions.espresso.get()}"
-    )
+    testImplementation(libs.junit4)
+    testImplementation(libs.mockk)
+    testImplementation(libs.kotlin.test.junit)
+
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.room.testing)
+    androidTestImplementation(libs.androidx.espresso.core)
 }

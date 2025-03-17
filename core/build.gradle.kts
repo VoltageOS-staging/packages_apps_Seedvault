@@ -48,6 +48,8 @@ dependencies {
     implementation(libs.slf4j.api)
 
     testImplementation(kotlin("test"))
-    testImplementation("org.ogce:xpp3:1.1.6")
-    testImplementation("org.slf4j:slf4j-simple:2.0.3")
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.mockk)
+    testImplementation(libs.xpp3)
+    testImplementation(libs.slf4j.simple)
 }

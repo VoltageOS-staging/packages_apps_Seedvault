@@ -23,7 +23,7 @@ import android.util.Log
 import androidx.work.ExistingPeriodicWorkPolicy.UPDATE
 import androidx.work.WorkManager
 import com.google.android.material.color.DynamicColors
-import com.stevesoltys.seedvault.MemoryLogger.getMemStr
+import org.calyxos.seedvault.core.MemoryLogger.getMemStr
 import com.stevesoltys.seedvault.backend.BackendManager
 import com.stevesoltys.seedvault.backend.saf.storagePluginModuleSaf
 import com.stevesoltys.seedvault.backend.webdav.storagePluginModuleWebDav
@@ -67,14 +67,7 @@ open class App : Application() {
         single { SettingsManager(this@App) }
         single { BackupNotificationManager(this@App) }
         single { BackendManager(this@App, get(), get(), get()) }
-        single {
-            BackendFactory {
-                // uses context of the device's main user to be able to access USB storage
-                this@App.applicationContext.getStorageContext {
-                    get<SettingsManager>().getSafProperties()?.isUsb == true
-                }
-            }
-        }
+        single { BackendFactory() }
         single { BackupStateManager(this@App) }
         single { Clock() }
         factory<IBackupManager> { IBackupManager.Stub.asInterface(getService(BACKUP_SERVICE)) }
@@ -90,6 +83,7 @@ open class App : Application() {
                 storageBackup = get(),
                 backupManager = get(),
                 backupStateManager = get(),
+                checker = get(),
             )
         }
         viewModel {
@@ -199,7 +193,7 @@ const val ERROR_BACKUP_CANCELLED: Int = BackupManager.ERROR_BACKUP_CANCELLED
 const val ERROR_BACKUP_NOT_ALLOWED: Int = BackupManager.ERROR_BACKUP_NOT_ALLOWED
 
 // TODO this doesn't work for LineageOS as they do public debug builds
-fun isDebugBuild() = Build.TYPE == "userdebug"
+fun isDebugBuild() = Build.TYPE == "userdebug" || Build.TYPE == "eng"
 
 fun <T> permitDiskReads(func: () -> T): T {
     return if (isDebugBuild()) {
